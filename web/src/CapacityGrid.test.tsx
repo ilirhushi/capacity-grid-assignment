@@ -146,6 +146,11 @@ test('renders only nearby columns in a two-year range', async () => {
   expect(await screen.findByRole('row', { name: /Ana Ferreira/ })).toBeInTheDocument()
   expect(screen.getAllByRole('columnheader').length).toBeLessThan(20)
   expect(screen.getByRole('columnheader', { name: /Jan 6/ })).toBeInTheDocument()
+  const scroller = screen.getByRole('table').parentElement!
+  scroller.scrollLeft = 105 * 156
+  fireEvent.scroll(scroller)
+  expect(screen.getByRole('columnheader', { name: /Jan 4/ })).toBeInTheDocument()
+  expect(screen.getAllByRole('columnheader').length).toBeLessThan(20)
 })
 
 test('resets the week window when moving to another people page', async () => {
