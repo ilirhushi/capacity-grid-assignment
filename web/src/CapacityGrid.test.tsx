@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, expect, test, vi } from 'vitest'
 import { CapacityGrid } from './CapacityGrid'
 
-const first = { weeks: ['2025-12-29'], people: [{ id: 1, name: 'Ana Ferreira', weeklyHours: 40, allocated: [320] }] }
+const first = { weeks: ['2025-12-29'], people: [{ id: 1, name: 'Ana Ferreira', weeklyHours: 40, allocated: [320] }], totalPeople: 1, page: 1, pageSize: 50 }
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body, text: async () => 'Save failed' }) as Response
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
@@ -98,4 +98,72 @@ test('does not display a nonzero allocation as zero', async () => {
   const row = await screen.findByRole('row', { name: /Ana Ferreira/ })
   expect(within(row).getByText('0.003h')).toBeInTheDocument()
   expect(within(row).getByText('Over by 0.003h')).toBeInTheDocument()
+})
+
+test('requests the next people page and resets to page one for search', async () => {
+  const firstPage = { ...first, totalPeople: 120 }
+  const secondPage = { ...first, people: [{ id: 51, name: 'Bo Lindqvist', weeklyHours: 40, allocated: [16] }], totalPeople: 120, page: 2 }
+  const searched = { ...first, totalPeople: 1 }
+  const fetchMock = vi.fn().mockResolvedValueOnce(response(firstPage)).mockResolvedValueOnce(response(secondPage)).mockResolvedValueOnce(response(searched))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<CapacityGrid from="2025-12-29" to="2026-01-02" />)
+  expect(await screen.findByText(/Showing 1 to 50 of 120/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  expect(await screen.findByRole('row', { name: /Bo Lindqvist/ })).toBeInTheDocument()
+  expect(fetchMock.mock.calls[1][0]).toContain('page=2')
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Find a person' }), { target: { value: 'Ana' } })
+  expect(await screen.findByRole('row', { name: /Ana Ferreira/ })).toBeInTheDocument()
+  expect(fetchMock.mock.calls[2][0]).toContain('search=Ana')
+  expect(fetchMock.mock.calls[2][0]).toContain('page=1')
+})
+
+test('ignores a late response from a page left by search', async () => {
+  let resolvePage!: (value: Response) => void
+  const delayedPage = new Promise<Response>(resolve => { resolvePage = resolve })
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(response({ ...first, totalPeople: 100 }))
+    .mockReturnValueOnce(delayedPage)
+    .mockResolvedValueOnce(response(first))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<CapacityGrid from="2025-12-29" to="2026-01-02" />)
+  expect(await screen.findByRole('button', { name: 'Next page' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Find a person' }), { target: { value: 'Ana' } })
+  expect(await screen.findByText('Showing 1 to 1 of 1')).toBeInTheDocument()
+  await act(async () => resolvePage(response({ ...first, people: [{ id: 51, name: 'Bo Lindqvist', weeklyHours: 40, allocated: [0] }], totalPeople: 100, page: 2 })))
+  expect(screen.getByText('Showing 1 to 1 of 1')).toBeInTheDocument()
+  expect(screen.queryByRole('row', { name: /Bo Lindqvist/ })).not.toBeInTheDocument()
+})
+
+test('renders only nearby columns in a two-year range', async () => {
+  const weeks = Array.from({ length: 105 }, (_, index) => {
+    const date = new Date('2025-01-06T00:00:00Z')
+    date.setUTCDate(date.getUTCDate() + index * 7)
+    return date.toISOString().slice(0, 10)
+  })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ ...first, weeks, people: [{ ...first.people[0], allocated: Array(105).fill(0) }] })))
+  render(<CapacityGrid from="2025-01-06" to="2027-01-08" />)
+  expect(await screen.findByRole('row', { name: /Ana Ferreira/ })).toBeInTheDocument()
+  expect(screen.getAllByRole('columnheader').length).toBeLessThan(20)
+  expect(screen.getByRole('columnheader', { name: /Jan 6/ })).toBeInTheDocument()
+})
+
+test('resets the week window when moving to another people page', async () => {
+  const weeks = Array.from({ length: 105 }, (_, index) => {
+    const date = new Date('2025-01-06T00:00:00Z')
+    date.setUTCDate(date.getUTCDate() + index * 7)
+    return date.toISOString().slice(0, 10)
+  })
+  const pageOne = { ...first, weeks, totalPeople: 100, people: [{ ...first.people[0], allocated: Array(105).fill(0) }] }
+  const pageTwo = { ...pageOne, page: 2, people: [{ id: 51, name: 'Bo Lindqvist', weeklyHours: 40, allocated: Array(105).fill(0) }] }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response(pageOne)).mockResolvedValueOnce(response(pageTwo)))
+  render(<CapacityGrid from="2025-01-06" to="2027-01-08" />)
+  expect(await screen.findByRole('row', { name: /Ana Ferreira/ })).toBeInTheDocument()
+  const scroller = screen.getByRole('table').parentElement!
+  scroller.scrollLeft = 1560
+  fireEvent.scroll(scroller)
+  expect(screen.queryByRole('columnheader', { name: /Jan 6/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  expect(await screen.findByRole('row', { name: /Bo Lindqvist/ })).toBeInTheDocument()
+  expect(screen.getByRole('columnheader', { name: /Jan 6/ })).toBeInTheDocument()
 })
