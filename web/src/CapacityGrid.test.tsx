@@ -69,3 +69,33 @@ test('offers retry after a failed initial load', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(await screen.findByRole('row', { name: /Ana Ferreira/ })).toBeInTheDocument()
 })
+
+test('keeps search unavailable until a save finishes so its error stays visible', async () => {
+  let finishSave!: (value: Response) => void
+  const pendingSave = new Promise<Response>(resolve => { finishSave = resolve })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response(first)).mockReturnValueOnce(pendingSave))
+  render(<CapacityGrid from="2025-12-29" to="2026-01-02" />)
+  const row = await screen.findByRole('row', { name: /Ana Ferreira/ })
+  fireEvent.click(within(row).getByRole('button', { name: /Edit/ }))
+  fireEvent.click(within(row).getByRole('button', { name: 'Save' }))
+  expect(screen.getByRole('searchbox', { name: 'Find a person' })).toBeDisabled()
+  await act(async () => finishSave(response({}, false)))
+  expect(within(row).getByRole('alert')).toHaveTextContent('Save failed')
+  expect(screen.getByRole('searchbox', { name: 'Find a person' })).toBeEnabled()
+})
+
+test('shows a small fractional overage accurately', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ weeks: first.weeks, people: [{ ...first.people[0], weeklyHours: 39.99, allocated: [40] }] })))
+  render(<CapacityGrid from="2025-12-29" to="2026-01-02" />)
+  const row = await screen.findByRole('row', { name: /Ana Ferreira/ })
+  expect(within(row).getByText('39.99h')).toBeInTheDocument()
+  expect(within(row).getByText('Over by 0.01h')).toBeInTheDocument()
+})
+
+test('does not display a nonzero allocation as zero', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ weeks: first.weeks, people: [{ ...first.people[0], weeklyHours: 0, allocated: [0.003] }] })))
+  render(<CapacityGrid from="2025-12-29" to="2026-01-02" />)
+  const row = await screen.findByRole('row', { name: /Ana Ferreira/ })
+  expect(within(row).getByText('0.003h')).toBeInTheDocument()
+  expect(within(row).getByText('Over by 0.003h')).toBeInTheDocument()
+})

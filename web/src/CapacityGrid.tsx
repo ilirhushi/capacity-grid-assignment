@@ -6,7 +6,7 @@ type Capacity = { weeks: string[]; people: Person[] }
 
 const PAGE_SIZE = 50
 const dateLabel = (date: string) => new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`))
-const hours = (value: number) => `${Number.isInteger(value) ? value : value.toFixed(1)}h`
+const hours = (value: number) => `${Number(value.toPrecision(12))}h`
 
 function shiftDate(date: string, days: number) {
   const result = new Date(`${date}T00:00:00Z`)
@@ -67,8 +67,8 @@ export function CapacityGrid({ from, to }: Props) {
 
   async function save(person: Person) {
     const value = Number(draftHours)
-    if (draftHours.trim() === '' || !Number.isFinite(value) || value < 0 || value > 168) {
-      setSaveError('Enter weekly hours from 0 to 168.')
+    if (draftHours.trim() === '' || !Number.isFinite(value) || value < 0 || value > 168 || Math.abs(Math.round(value * 100) - value * 100) > 1e-7) {
+      setSaveError('Enter weekly hours from 0 to 168, with at most two decimal places.')
       return
     }
     setSaving(true)
@@ -112,7 +112,7 @@ export function CapacityGrid({ from, to }: Props) {
         <div><span className="metric">{data?.weeks.length ?? '–'}</span><span>Weeks</span></div>
       </div>
       <div className="table-controls">
-        <label>Find a person <input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder="Search by name" /></label>
+        <label>Find a person <input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder="Search by name" disabled={saving} /></label>
         <span className="legend"><i /> Over weekly capacity</span>
       </div>
       {loading && <p className="notice" role="status">{data ? 'Refreshing capacity…' : 'Loading capacity…'}</p>}
@@ -127,7 +127,7 @@ export function CapacityGrid({ from, to }: Props) {
                 <td className="capacity-cell">
                   {editing === person.id ? <div className="edit-controls">
                     <label className="sr-only" htmlFor={`hours-${person.id}`}>Weekly hours for {person.name}</label>
-                    <input id={`hours-${person.id}`} type="number" min="0" max="168" step="0.5" value={draftHours} onChange={event => setDraftHours(event.target.value)} disabled={saving} />
+                    <input id={`hours-${person.id}`} type="number" min="0" max="168" step="0.01" value={draftHours} onChange={event => setDraftHours(event.target.value)} disabled={saving} />
                     <button type="button" onClick={() => save(person)} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
                     <button type="button" className="quiet" onClick={() => { setEditing(null); setSaveError('') }} disabled={saving}>Cancel</button>
                     {saveError && <span className="field-error" role="alert">{saveError}</span>}
@@ -144,7 +144,7 @@ export function CapacityGrid({ from, to }: Props) {
           </table>
           {visible.length === 0 && <p className="notice">No people match this search.</p>}
         </div>
-        <div className="pagination"><span>Showing {filtered.length ? page * PAGE_SIZE + 1 : 0} to {Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}</span><div><button type="button" onClick={() => setPage(value => value - 1)} disabled={page === 0}>Previous page</button><button type="button" onClick={() => setPage(value => value + 1)} disabled={(page + 1) * PAGE_SIZE >= filtered.length}>Next page</button></div></div>
+        <div className="pagination"><span>Showing {filtered.length ? page * PAGE_SIZE + 1 : 0} to {Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}</span><div><button type="button" onClick={() => setPage(value => value - 1)} disabled={saving || page === 0}>Previous page</button><button type="button" onClick={() => setPage(value => value + 1)} disabled={saving || (page + 1) * PAGE_SIZE >= filtered.length}>Next page</button></div></div>
       </>}
     </section>
   )

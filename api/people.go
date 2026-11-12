@@ -22,8 +22,8 @@ func (s *server) handleUpdatePerson(w http.ResponseWriter, r *http.Request) {
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil || input.WeeklyHours == nil || math.IsNaN(*input.WeeklyHours) || math.IsInf(*input.WeeklyHours, 0) || *input.WeeklyHours < 0 || *input.WeeklyHours > 168 {
-		http.Error(w, "weeklyHours must be a number between 0 and 168", http.StatusBadRequest)
+	if err := decoder.Decode(&input); err != nil || input.WeeklyHours == nil || math.IsNaN(*input.WeeklyHours) || math.IsInf(*input.WeeklyHours, 0) || *input.WeeklyHours < 0 || *input.WeeklyHours > 168 || math.Abs(math.Round(*input.WeeklyHours*100)-*input.WeeklyHours*100) > 1e-7 {
+		http.Error(w, "weeklyHours must be a number from 0 to 168 with at most two decimal places", http.StatusBadRequest)
 		return
 	}
 	var extra any

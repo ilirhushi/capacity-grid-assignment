@@ -17,6 +17,7 @@ func TestUpdatePersonRejectsInvalidInput(t *testing.T) {
 		{"malformed JSON", "1", `{`},
 		{"negative", "1", `{"weeklyHours":-1}`},
 		{"above maximum", "1", `{"weeklyHours":169}`},
+		{"too many decimal places", "1", `{"weeklyHours":39.999}`},
 		{"non-finite", "1", `{"weeklyHours":NaN}`},
 		{"extra field", "1", `{"weeklyHours":40,"role":"admin"}`},
 		{"extra object", "1", `{"weeklyHours":40}{"weeklyHours":20}`},
