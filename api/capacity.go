@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -13,8 +14,11 @@ type capacityPerson struct {
 }
 
 type capacityResponse struct {
-	Weeks  []string         `json:"weeks"`
-	People []capacityPerson `json:"people"`
+	Weeks       []string         `json:"weeks"`
+	People      []capacityPerson `json:"people"`
+	TotalPeople int              `json:"totalPeople"`
+	Page        int              `json:"page"`
+	PageSize    int              `json:"pageSize"`
 }
 
 func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
@@ -24,19 +28,51 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "from and to must be valid dates in ascending order, at most two years apart", http.StatusBadRequest)
 		return
 	}
+	page, pageSize := 1, 50
+	var err error
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		page, err = strconv.Atoi(raw)
+		if err != nil || page < 1 || page > 1000000 {
+			http.Error(w, "page must be between 1 and 1000000", http.StatusBadRequest)
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("pageSize"); raw != "" {
+		pageSize, err = strconv.Atoi(raw)
+		if err != nil || pageSize < 1 || pageSize > 100 {
+			http.Error(w, "pageSize must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+	}
+	search := r.URL.Query().Get("search")
+	if len([]rune(search)) > 200 {
+		http.Error(w, "search must be at most 200 characters", http.StatusBadRequest)
+		return
+	}
 	first := from.AddDate(0, 0, -(int(from.Weekday())+6)%7)
 	last := to.AddDate(0, 0, -(int(to.Weekday())+6)%7)
-	response := capacityResponse{Weeks: []string{}, People: []capacityPerson{}}
+	response := capacityResponse{Weeks: []string{}, People: []capacityPerson{}, Page: page, PageSize: pageSize}
 	for day := first; !day.After(last); day = day.AddDate(0, 0, 7) {
 		response.Weeks = append(response.Weeks, day.Format("2006-01-02"))
+	}
+	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM people WHERE strpos(lower(name), lower($1::text)) > 0`, search).Scan(&response.TotalPeople); err != nil {
+		http.Error(w, "could not count people", http.StatusInternalServerError)
+		return
 	}
 
 	// An assignment fraction is a share of an eight-hour working day.
 	rows, err := s.db.Query(r.Context(), `
-		WITH allocation AS (
+		WITH selected_people AS MATERIALIZED (
+			SELECT id, name, weekly_hours
+			FROM people
+			WHERE strpos(lower(name), lower($3::text)) > 0
+			ORDER BY name, id
+			LIMIT $4 OFFSET $5
+		), allocation AS (
 			SELECT a.person_id, date_trunc('week', d.day)::date AS week_start,
 			       sum(a.hours_per_day * 8)::double precision AS hours
 			FROM assignments a
+			JOIN selected_people sp ON sp.id = a.person_id
 			CROSS JOIN LATERAL generate_series(
 				greatest(a.start_date, $1::date),
 				least(a.end_date, $2::date + 6), interval '1 day'
@@ -48,11 +84,11 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT p.id, p.name, p.weekly_hours::double precision,
 		       coalesce(a.hours, 0)
-		FROM people p
+		FROM selected_people p
 		CROSS JOIN generate_series($1::date, $2::date, interval '1 week') AS w(week_start)
 		LEFT JOIN allocation a ON a.person_id = p.id AND a.week_start = w.week_start
 		ORDER BY p.name, p.id, w.week_start
-	`, first.Format("2006-01-02"), last.Format("2006-01-02"))
+	`, first.Format("2006-01-02"), last.Format("2006-01-02"), search, pageSize, (page-1)*pageSize)
 	if err != nil {
 		http.Error(w, "could not load capacity", http.StatusInternalServerError)
 		return
